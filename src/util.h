@@ -19,5 +19,6 @@
 
 #include <stdbool.h>
 
-int blank_fb(char *path, bool clear);
+int set_bool(char *path, bool value);
+int set_int(char *path, int value);
 int read_file(char *path, char *output, int output_len);

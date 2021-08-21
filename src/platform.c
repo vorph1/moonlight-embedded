@@ -61,7 +61,7 @@ enum platform platform_check(char* name) {
   #endif
   #ifdef HAVE_AML
   if (std || strcmp(name, "aml") == 0) {
-    void *handle = dlopen("libmoonlight-aml.so", RTLD_NOW | RTLD_GLOBAL);
+    void *handle = dlopen("libmoonlight-aml.so", RTLD_LAZY | RTLD_GLOBAL);
     if (handle != NULL && access("/dev/amvideo", F_OK) != -1)
       return AML;
   }
@@ -104,13 +104,15 @@ void platform_start(enum platform system) {
   switch (system) {
   #ifdef HAVE_AML
   case AML:
-    blank_fb("/sys/class/graphics/fb0/blank", true);
-    blank_fb("/sys/class/graphics/fb1/blank", true);
+    set_bool("/sys/class/graphics/fb0/blank", true);
+    set_bool("/sys/class/graphics/fb1/blank", true);
+
+    set_bool("/sys/class/video/disable_video", false);
     break;
   #endif
   #if defined(HAVE_PI) | defined(HAVE_MMAL)
   case PI:
-    blank_fb("/sys/class/graphics/fb0/blank", true);
+    set_bool("/sys/class/graphics/fb0/blank", true);
     break;
   #endif
   }
@@ -120,13 +122,15 @@ void platform_stop(enum platform system) {
   switch (system) {
   #ifdef HAVE_AML
   case AML:
-    blank_fb("/sys/class/graphics/fb0/blank", false);
-    blank_fb("/sys/class/graphics/fb1/blank", false);
+    set_bool("/sys/class/graphics/fb0/blank", false);
+    set_bool("/sys/class/graphics/fb1/blank", false);
+
+    set_bool("/sys/class/video/disable_video", true);
     break;
   #endif
   #if defined(HAVE_PI) | defined(HAVE_MMAL)
   case PI:
-    blank_fb("/sys/class/graphics/fb0/blank", false);
+    set_bool("/sys/class/graphics/fb0/blank", false);
     break;
   #endif
   }

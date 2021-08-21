@@ -24,14 +24,33 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
 
-int blank_fb(char *path, bool clear) {
+int set_int(char *path, int value) {
+  int fd = open(path, O_RDWR);
+  if(fd >= 0) {
+
+    int length = snprintf( NULL, 0, "%d", value );
+    char* str = malloc( length + 1 );
+    snprintf( str, length + 1, "%d", value );
+    int ret = write(fd, str, length);
+    if (ret < 0)
+      printf("Failed to set int parameter %s to: %s, error %d!\n", path, str, ret);
+
+    free(str);
+    close(fd);
+    return 0;
+  } else
+    return -1;
+}
+
+int set_bool(char *path, bool value) {
   int fd = open(path, O_RDWR);
 
   if(fd >= 0) {
-    int ret = write(fd, clear ? "1" : "0", 1);
+    int ret = write(fd, value ? "1" : "0", 1);
     if (ret < 0)
-      fprintf(stderr, "Failed to clear framebuffer %s: %d\n", path, ret);
+      printf("Failed to set boolean parameter %s, error %d!\n", path, ret);
 
     close(fd);
     return 0;
@@ -49,4 +68,3 @@ int read_file(char *path, char* output, int output_len) {
   } else
     return -1;
 }
-
