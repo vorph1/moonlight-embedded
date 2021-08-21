@@ -29,16 +29,27 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <codec.h>
+#include <errno.h>
+#include <string.h>
 
-#define SYNC_OUTSIDE 0x02
+#define SYNC_OUTSIDE (2)
 #define UCODE_IP_ONLY_PARAM 0x08
+#define DECODER_BUFFER_SIZE 300*1024
+#define MAX_WRITE_ATTEMPTS 3
+#define EAGAIN_SLEEP_TIME 15 * 1000
 
 static codec_para_t codecParam = { 0 };
+static char* frame_buffer;
 
 int aml_setup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
   codecParam.stream_type = STREAM_TYPE_ES_VIDEO;
   codecParam.has_video = 1;
   codecParam.noblock = 0;
+  codecParam.handle = -1;
+  codecParam.cntl_handle = -1;
+  codecParam.sub_handle = -1;
+  codecParam.audio_utils_handle = -1;
+  codecParam.multi_vdec = 1;
   codecParam.am_sysinfo.param = 0;
 
   switch (videoFormat) {
@@ -84,27 +95,51 @@ int aml_setup(int videoFormat, int width, int height, int redrawRate, void* cont
     return -2;
   }
 
+  frame_buffer = malloc(DECODER_BUFFER_SIZE);
+  if (frame_buffer == NULL) {
+    fprintf(stderr, "Not enough memory to initialize frame buffer\n");
+    return -2;
+  }
+
   return 0;
 }
 
 void aml_cleanup() {
   codec_close(&codecParam);
+  free(frame_buffer);
 }
 
 int aml_submit_decode_unit(PDECODE_UNIT decodeUnit) {
-  int result = DR_OK;
-  PLENTRY entry = decodeUnit->bufferList;
-  while (entry != NULL) {
-    int api = codec_write(&codecParam, entry->data, entry->length);
-    if (api != entry->length) {
-      fprintf(stderr, "codec_write error: %x\n", api);
-      codec_reset(&codecParam);
-      result = DR_NEED_IDR;
-      break;
-    }
 
-    entry = entry->next;
+  if (decodeUnit->fullLength > DECODER_BUFFER_SIZE) {
+    fprintf(stderr, "Video decode buffer too small, %i > %i\n", decodeUnit->fullLength, DECODER_BUFFER_SIZE);
+    return DR_OK;
   }
+
+  int result = DR_OK, length = 0, errCounter = 0;
+  PLENTRY entry = decodeUnit->bufferList;
+  do {
+    memcpy(frame_buffer+length, entry->data, entry->length);
+    length += entry->length;
+    entry = entry->next;
+  } while (entry != NULL);
+  do {
+    int api = codec_write(&codecParam, frame_buffer, length);
+    if (api < 0) {
+      if (errno != EAGAIN) {
+        fprintf(stderr, "codec_write error: %x %d\n", api, errno);
+        codec_reset(&codecParam);
+        result = DR_NEED_IDR;
+      } else {
+        fprintf(stderr, "EAGAIN triggered, trying again...\n");
+        usleep(EAGAIN_SLEEP_TIME);
+        ++errCounter;
+        continue;
+      }
+    }
+    break;
+  } while (errCounter < MAX_WRITE_ATTEMPTS);
+ 
   return result;
 }
 
