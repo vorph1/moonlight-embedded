@@ -31,7 +31,9 @@
 #include <codec.h>
 #include <errno.h>
 #include <string.h>
+#include "video.h"
 
+#define EXTERNAL_PTS (1)
 #define SYNC_OUTSIDE (2)
 #define UCODE_IP_ONLY_PARAM 0x08
 #define DECODER_BUFFER_SIZE 512*1024
@@ -40,17 +42,19 @@
 
 static codec_para_t codecParam = { 0 };
 static char* frame_buffer;
+bool FLAG_PACKET_FRAME_SUBMIT = false;
 
 int aml_setup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
-  codecParam.stream_type = STREAM_TYPE_ES_VIDEO;
-  codecParam.has_video = 1;
-  codecParam.noblock = 0;
-  codecParam.handle = -1;
-  codecParam.cntl_handle = -1;
-  codecParam.sub_handle = -1;
+  codecParam.handle             = -1;
+  codecParam.cntl_handle        = -1;
   codecParam.audio_utils_handle = -1;
-  codecParam.multi_vdec = 1;
-  codecParam.am_sysinfo.param = 0;
+  codecParam.sub_handle         = -1;
+  codecParam.has_video          = 1;
+  codecParam.noblock            = 0;
+  codecParam.stream_type        = STREAM_TYPE_ES_VIDEO;
+  codecParam.dec_mode           = STREAM_TYPE_FRAME;
+  codecParam.video_path         = FRAME_BASE_PATH_AMLVIDEO_AMVIDEO;
+  codecParam.am_sysinfo.param   = 0;
 
   switch (videoFormat) {
     case VIDEO_FORMAT_H264:
@@ -82,7 +86,7 @@ int aml_setup(int videoFormat, int width, int height, int redrawRate, void* cont
   codecParam.am_sysinfo.width = width;
   codecParam.am_sysinfo.height = height;
   codecParam.am_sysinfo.rate = 96000 / redrawRate;
-  codecParam.am_sysinfo.param = (void*) ((size_t) codecParam.am_sysinfo.param | SYNC_OUTSIDE);
+  codecParam.am_sysinfo.param = (void*) ((size_t) codecParam.am_sysinfo.param | EXTERNAL_PTS);
 
   int ret;
   if ((ret = codec_init(&codecParam)) != 0) {
@@ -101,6 +105,10 @@ int aml_setup(int videoFormat, int width, int height, int redrawRate, void* cont
     return -2;
   }
 
+  if (drFlags & AML_SUBMIT_PACKETS) {
+    FLAG_PACKET_FRAME_SUBMIT = true;
+  }
+
   return 0;
 }
 
@@ -109,7 +117,34 @@ void aml_cleanup() {
   free(frame_buffer);
 }
 
+int aml_stream_submit_decode_unit(PDECODE_UNIT decodeUnit) {
+  int result = DR_OK, length = 0, errCounter = 0, api = 0;
+  PLENTRY entry = decodeUnit->bufferList;
+  codec_checkin_pts(&codecParam, decodeUnit->presentationTimeMs);
+  while (entry != NULL) {
+    api = codec_write(&codecParam, frame_buffer, length);
+    if (api < 0) {
+      if (errno != EAGAIN || errCounter >= MAX_WRITE_ATTEMPTS) {
+        fprintf(stderr, "codec_write error: %x %d\n", api, errno);
+        codec_reset(&codecParam);
+        result = DR_NEED_IDR;
+      } else {
+        fprintf(stderr, "EAGAIN triggered, trying again...\n");
+        usleep(EAGAIN_SLEEP_TIME);
+        ++errCounter;
+        continue;
+      }
+    }
+    errCounter = 0;
+    entry = entry->next;
+  }
+ 
+  return result;
+}
+
 int aml_submit_decode_unit(PDECODE_UNIT decodeUnit) {
+
+  if (FLAG_PACKET_FRAME_SUBMIT) return aml_stream_submit_decode_unit(decodeUnit);
 
   if (decodeUnit->fullLength > DECODER_BUFFER_SIZE) {
     fprintf(stderr, "Video decode buffer too small, %i > %i\n", decodeUnit->fullLength, DECODER_BUFFER_SIZE);

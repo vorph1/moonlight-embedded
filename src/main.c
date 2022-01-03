@@ -130,6 +130,11 @@ static void stream(PSERVER_DATA server, PCONFIGURATION config, enum platform sys
     break;
   }
 
+  if (!config->unsupported) {
+    drFlags |= AML_SUBMIT_PACKETS;
+    printf("UNSUPPORTED FEATURE: AML_SUBMIT_PACKETS flag is enabled\n");
+  }
+
   if (config->debug_level > 0) {
     printf("Stream %d x %d, %d fps, %d kbps\n", config->stream.width, config->stream.height, config->stream.fps, config->stream.bitrate);
     connection_debug = true;
