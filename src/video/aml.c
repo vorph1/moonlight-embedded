@@ -42,7 +42,6 @@
 
 static codec_para_t codecParam = { 0 };
 static char* frame_buffer;
-bool FLAG_PACKET_FRAME_SUBMIT = false;
 
 int aml_setup(int videoFormat, int width, int height, int redrawRate, void* context, int drFlags) {
   codecParam.handle             = -1;
@@ -105,10 +104,6 @@ int aml_setup(int videoFormat, int width, int height, int redrawRate, void* cont
     return -2;
   }
 
-  if (drFlags & AML_SUBMIT_PACKETS) {
-    FLAG_PACKET_FRAME_SUBMIT = true;
-  }
-
   return 0;
 }
 
@@ -122,12 +117,13 @@ int aml_stream_submit_decode_unit(PDECODE_UNIT decodeUnit) {
   PLENTRY entry = decodeUnit->bufferList;
   codec_checkin_pts(&codecParam, decodeUnit->presentationTimeMs);
   while (entry != NULL) {
-    api = codec_write(&codecParam, frame_buffer, length);
+    api = codec_write(&codecParam, entry->data, entry->length);
     if (api < 0) {
       if (errno != EAGAIN || errCounter >= MAX_WRITE_ATTEMPTS) {
         fprintf(stderr, "codec_write error: %x %d\n", api, errno);
         codec_reset(&codecParam);
         result = DR_NEED_IDR;
+        break;
       } else {
         fprintf(stderr, "EAGAIN triggered, trying again...\n");
         usleep(EAGAIN_SLEEP_TIME);
@@ -144,14 +140,12 @@ int aml_stream_submit_decode_unit(PDECODE_UNIT decodeUnit) {
 
 int aml_submit_decode_unit(PDECODE_UNIT decodeUnit) {
 
-  if (FLAG_PACKET_FRAME_SUBMIT) return aml_stream_submit_decode_unit(decodeUnit);
-
   if (decodeUnit->fullLength > DECODER_BUFFER_SIZE) {
     fprintf(stderr, "Video decode buffer too small, %i > %i\n", decodeUnit->fullLength, DECODER_BUFFER_SIZE);
     return DR_OK;
   }
 
-  int result = DR_OK, length = 0, errCounter = 0;
+  int result = DR_OK, length = 0, errCounter = 0, api;
   PLENTRY entry = decodeUnit->bufferList;
   do {
     memcpy(frame_buffer+length, entry->data, entry->length);
@@ -161,7 +155,7 @@ int aml_submit_decode_unit(PDECODE_UNIT decodeUnit) {
 
   codec_checkin_pts(&codecParam, decodeUnit->presentationTimeMs);
   do {
-    int api = codec_write(&codecParam, frame_buffer, length);
+    api = codec_write(&codecParam, frame_buffer, length);
     if (api < 0) {
       if (errno != EAGAIN) {
         fprintf(stderr, "codec_write error: %x %d\n", api, errno);
